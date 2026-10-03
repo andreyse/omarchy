@@ -35,7 +35,8 @@ for candidate in "${battery_candidates[@]}"; do
 
   [[ -z $battery ]] && { battery=$candidate; battery_info=$candidate_info; }
 
-  if [[ $candidate_energy_full =~ ^[0-9]+([.][0-9]+)?$ ]] && awk -v v="$candidate_energy_full" 'BEGIN { exit !(v > 0) }'; then
+  # upower formats numbers for the user's locale, so 56.4 may arrive as 56,4.
+  if awk -v v="$candidate_energy_full" 'BEGIN { sub(/,/, ".", v); exit !(v ~ /^[0-9]+([.][0-9]+)?$/ && v + 0 > 0) }'; then
     battery=$candidate
     battery_info=$candidate_info
     break

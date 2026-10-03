@@ -148,3 +148,57 @@ grep -Fx $'rate\t7.3W' <<<"$unresolvable_native_path_output" >/dev/null || fail 
 grep -q $'^cycles\t' <<<"$unresolvable_native_path_output" && fail "battery status should not report cycles with an unresolvable native-path"
 
 pass "battery status degrades gracefully when native-path doesn't resolve to a sysfs directory"
+
+# upower formats numbers for the user's locale, so under de_DE the real
+# battery's energy-full reads 56,4 Wh. It must still win over the phantom, and
+# with no thresholds in upower's output they come from the real battery's sysfs.
+printf '0\n' >"$tmp_dir/power/BAT0/charge_control_start_threshold"
+printf '0\n' >"$tmp_dir/power/BAT0/charge_control_end_threshold"
+printf '75\n' >"$tmp_dir/power/BAT1/charge_control_start_threshold"
+printf '80\n' >"$tmp_dir/power/BAT1/charge_control_end_threshold"
+cat >"$tmp_dir/bin/upower" <<'STUB'
+#!/bin/bash
+
+if [[ $1 == "-e" ]]; then
+  echo "/org/freedesktop/UPower/devices/battery_BAT0"
+  echo "/org/freedesktop/UPower/devices/battery_BAT1"
+  exit 0
+fi
+
+if [[ $1 == "-i" ]]; then
+  case "$2" in
+    */battery_BAT0)
+      cat <<'INFO'
+  native-path:          BAT0
+  state:                unknown
+  energy:               0 Wh
+  energy-full:          0 Wh
+  energy-rate:          0 W
+  percentage:           0%
+INFO
+      ;;
+    */battery_BAT1)
+      cat <<'INFO'
+  native-path:          BAT1
+  state:                charging
+  energy:               38,3 Wh
+  energy-full:          56,4 Wh
+  energy-rate:          29,7 W
+  percentage:           68%
+INFO
+      ;;
+  esac
+  exit 0
+fi
+
+exit 1
+STUB
+chmod +x "$tmp_dir/bin/upower"
+
+comma_locale_output=$(OMARCHY_POWER_SUPPLY_PATH="$tmp_dir/power" PATH="$tmp_dir/bin:$PATH" "$ROOT/bin/omarchy-battery-status" --shell)
+
+grep -Fx $'percentage\t68%' <<<"$comma_locale_output" >/dev/null || fail "battery status prefers the real battery when upower prints decimal commas"
+grep -Fx $'cycles\t80' <<<"$comma_locale_output" >/dev/null || fail "battery status reads cycle count from the real battery when upower prints decimal commas"
+grep -Fx $'threshold\t75-80%' <<<"$comma_locale_output" >/dev/null || fail "battery status reads sysfs charge thresholds from the real battery"
+
+pass "battery status prefers a real battery over a phantom BAT device when upower prints decimal commas"
